@@ -1,0 +1,8 @@
+.env
+gcp-oauth.keys.json
+.gdrive-server-credentials.json
+
+
+/venv
+
+
