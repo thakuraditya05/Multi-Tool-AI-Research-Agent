@@ -1,8 +1,18 @@
-.env
-gcp-oauth.keys.json
-.gdrive-server-credentials.json
+# .env
+# gcp-oauth.keys.json
+# .gdrive-server-credentials.json
 
 
-/venv
+# /venv
 
 
+
+# 1. Ignore EVERYTHING in the folder first
+*
+
+# 2. ALLOW these specific files to be pushed to GitHub (using !)
+!.gitignore
+!langgraph_tool_backend.py
+!streamlit_frontend_tool.py
+!requirements.txt
+!example.env

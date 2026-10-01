@@ -7,6 +7,7 @@ import yfinance as yf
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
+import praw
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -72,61 +73,44 @@ def fetch_market_data(ticker: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-# @tool
-# def fetch_social_trends(subreddit: str = "technology") -> str:
-#     """
-#     Fetches the top currently trending topics/posts from a specific Reddit community 
-#     (e.g., 'technology', 'artificial', 'stocks') without needing an API key.
-#     """
-#     try:
-#         url = f"https://www.reddit.com/r/{subreddit}/top.json?limit=5&t=day"
-#         headers = {'User-Agent': 'TrendAggregatorBot/1.0'}
-#         response = requests.get(url, headers=headers)
-#         data = response.json()
-        
-#         trends = []
-#         for post in data['data']['children']:
-#             title = post['data']['title']
-#             score = post['data']['score']
-#             trends.append(f"Title: {title} (Score: {score})")
-            
-#         return "\n".join(trends)
-#     except Exception as e:
-#         return f"Trend Fetching Error: {str(e)}"
+
 
 @tool
-def fetch_social_trends(subreddit: str = "technology") -> str:
+def fetch_social_trends(subreddit_name: str = "technology") -> str:
     """
-    Fetches the top currently trending posts directly from Real Reddit communities 
-    (e.g., 'technology', 'artificial', 'MachineLearning').
+    Fetches the top currently trending posts directly from Real Reddit using the official PRAW API.
+    Args:
+        subreddit_name (str): The name of the subreddit (e.g., 'artificial', 'MachineLearning').
     """
     try:
-        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=5"
+        REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID")
+        REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET")
         
-        # PRO-TRICK: Masking the Python script as a Real Chrome Browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        if not REDDIT_CLIENT_ID or not REDDIT_CLIENT_SECRET:
+            return "Error: Reddit API credentials (REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET) missing in .env file."
+
+        # Authenticating with Reddit officially
+        reddit = praw.Reddit(
+            client_id=REDDIT_CLIENT_ID,
+            client_secret=REDDIT_CLIENT_SECRET,
+            user_agent="AgenticAI_Bot/1.0 (by /u/your_reddit_username)" # Standard practice to include a user agent
+        )
         
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 429:
-            return "Error: Reddit is strictly rate-limiting right now. Need an official Reddit Developer API key to proceed."
-            
-        data = response.json()
+        subreddit = reddit.subreddit(subreddit_name)
         
         trends = []
-        for post in data['data']['children']:
-            title = post['data']['title']
-            score = post['data']['score']
-            post_url = post['data']['url']
-            trends.append(f"📌 {title}\n   Upvotes: {score} | Link: {post_url}")
+        # Fetching the top 5 'hot' posts
+        for post in subreddit.hot(limit=5):
+            # Skipping pinned/sticky posts
+            if not post.stickied:
+                trends.append(f"📌 {post.title}\n   Upvotes: {post.score} | Link: https://reddit.com{post.permalink}")
+            
+        if not trends:
+            return f"No trending posts found in r/{subreddit_name}."
             
         return "\n\n".join(trends)
     except Exception as e:
-        return f"Reddit Fetching Error: {str(e)}"
-
-
+        return f"Official Reddit API Error: {str(e)}"
 
 @tool
 def fetch_youtube_trends(search_query: str = "Artificial Intelligence") -> str:
@@ -156,32 +140,7 @@ def fetch_youtube_trends(search_query: str = "Artificial Intelligence") -> str:
     except Exception as e:
         return f"YouTube Fetching Error: {str(e)}"
 
-# @tool
-# def query_personal_mongodb(collection_name: str, query_filter_json: str) -> str:
-#     """
-#     Queries your personal MongoDB database. 
-#     Args:
-#         collection_name (str): The name of the collection.
-#         query_filter_json (str): A strict JSON string representing the MongoDB find() filter (e.g. '{"status": "active"}').
-#     """
-#     try:
-#         # NOTE: Apni MongoDB URI yahan replace karna (local ya Atlas)
-#         MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/") 
-#         client = MongoClient(MONGO_URI)
-#         db = client["my_personal_db"] # Apna Database name yahan daalo
-#         collection = db[collection_name]
-        
-#         query_dict = json.loads(query_filter_json)
-        
-#         # Fetch top 5 documents to prevent overwhelming the LLM
-#         results = list(collection.find(query_dict, {"_id": 0}).limit(5))
-#         client.close()
-        
-#         if not results:
-#             return "No documents matched the query."
-#         return json.dumps(results, indent=2)
-#     except Exception as e:
-#         return f"MongoDB Error: {str(e)}"
+
 
 @tool
 def query_personal_mongodb(collection_name: str, query_filter_json: str) -> str:
@@ -213,27 +172,35 @@ def query_personal_mongodb(collection_name: str, query_filter_json: str) -> str:
     except Exception as e:
         return f"MongoDB Error: {str(e)}"
 
+
+
 @tool
-def list_mongodb_collections() -> str:
+def query_dynamic_mongodb(database_name: str, collection_name: str, query_filter_json: str) -> str:
     """
-    Fetches and returns the names of all collections present in the connected MongoDB database.
-    Use this when the user asks what collections are available.
+    Queries documents from any specific database and collection in the cluster.
+    Args:
+        database_name (str): The name of the database.
+        collection_name (str): The name of the collection.
+        query_filter_json (str): A strict JSON string representing the MongoDB find() filter.
     """
     try:
         MONGO_URI = os.environ.get("MONGODB_URI") 
-        if not MONGO_URI:
-            return "Error: MONGODB_URI not found in environment variables."
+        if not MONGO_URI: return "Error: MONGODB_URI not found."
             
+        import json
         from pymongo import MongoClient
         client = MongoClient(MONGO_URI)
-        db = client.get_database("tool-agenticAi-db") # Tumhara DB name
         
-        collections = db.list_collection_names()
+        db = client.get_database(database_name)
+        collection = db[collection_name]
+        
+        query_dict = json.loads(query_filter_json)
+        results = list(collection.find(query_dict, {"_id": 0}).limit(5))
         client.close()
         
-        if not collections:
-            return "No collections found in the database."
-        return f"Collections available: {', '.join(collections)}"
+        if not results:
+            return "No documents matched the query."
+        return json.dumps(results, indent=2)
     except Exception as e:
         return f"MongoDB Error: {str(e)}"
 
@@ -268,6 +235,86 @@ def insert_mongodb_document(collection_name: str, document_json: str) -> str:
     except Exception as e:
         return f"MongoDB Insert Error: {str(e)}"
 
+
+@tool
+def list_mongodb_databases() -> str:
+    """
+    Fetches and returns the names of all databases present in the MongoDB cluster.
+    Use this when the user asks what databases are available.
+    """
+    try:
+        MONGO_URI = os.environ.get("MONGODB_URI") 
+        if not MONGO_URI:
+            return "Error: MONGODB_URI not found in environment variables."
+            
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI)
+        
+        # Lists all databases in the cluster
+        databases = client.list_database_names()
+        client.close()
+        
+        if not databases:
+            return "No databases found in the cluster."
+        return f"Databases available: {', '.join(databases)}"
+    except Exception as e:
+        return f"MongoDB Error: {str(e)}"
+
+@tool
+def list_mongodb_collections(database_name: str) -> str:
+    """
+    Fetches and returns the names of all collections present in a specific MongoDB database.
+    Args:
+        database_name (str): The exact name of the database to check.
+    """
+    try:
+        MONGO_URI = os.environ.get("MONGODB_URI") 
+        if not MONGO_URI:
+            return "Error: MONGODB_URI not found in environment variables."
+            
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI)
+        
+        # Dynamically connects to the requested database
+        db = client.get_database(database_name) 
+        collections = db.list_collection_names()
+        client.close()
+        
+        if not collections:
+            return f"No collections found in the '{database_name}' database."
+        return f"Collections in '{database_name}': {', '.join(collections)}"
+    except Exception as e:
+        return f"MongoDB Error: {str(e)}"
+
+
+@tool
+def insert_dynamic_mongodb(database_name: str, collection_name: str, document_json: str) -> str:
+    """
+    Inserts a new document (data) into any specific database and collection.
+    Args:
+        database_name (str): The name of the database.
+        collection_name (str): The name of the collection.
+        document_json (str): A strict JSON string representing the data to be inserted.
+    """
+    try:
+        MONGO_URI = os.environ.get("MONGODB_URI") 
+        if not MONGO_URI: return "Error: MONGODB_URI not found."
+            
+        import json
+        from pymongo import MongoClient
+        client = MongoClient(MONGO_URI)
+        
+        db = client.get_database(database_name)
+        collection = db[collection_name]
+        
+        document_dict = json.loads(document_json)
+        result = collection.insert_one(document_dict)
+        client.close()
+        
+        return f"Success: Document successfully inserted into '{database_name}.{collection_name}' with ID {str(result.inserted_id)}"
+    except Exception as e:
+        return f"MongoDB Insert Error: {str(e)}"
+
 # Update tool list
 tools = [
     scrape_website_text, 
@@ -277,7 +324,11 @@ tools = [
     fetch_youtube_trends,
     query_personal_mongodb,
     list_mongodb_collections,
-    insert_mongodb_document
+    insert_mongodb_document,
+    list_mongodb_databases,
+    query_dynamic_mongodb,
+    insert_dynamic_mongodb,
+    
 ]
 llm_with_tools = llm.bind_tools(tools)
 
@@ -323,7 +374,7 @@ if __name__ == "__main__":
     print("="*50 + "\n")
     
     config = {
-        "configurable": {"thread_id": "test_session_2"}, 
+        "configurable": {"thread_id": "test_session_5"}, 
         "recursion_limit": 5
     }
     
